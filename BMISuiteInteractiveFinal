@@ -1,0 +1,307 @@
+// BMISuiteInteractiveFinal.java
+// Interactive BMI assistant: step-by-step input, height in cm, interactive results menu,
+// mood+activity -> Body Harmony Score, nutrition suggestions, daily goals, optional save/print.
+
+
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.file.*;
+import java.text.DecimalFormat;
+import java.util.*;
+
+public class BMISuiteInteractiveFinal {
+
+    enum Gender { MALE, FEMALE, OTHER }
+
+    static class Person {
+        private final String name;
+        private final Gender gender;
+        private final double heightMeters;
+        private final double weightKg;
+
+        public Person(String name, Gender gender, double heightMeters, double weightKg) {
+            this.name = name;
+            this.gender = gender;
+            this.heightMeters = heightMeters;
+            this.weightKg = weightKg;
+        }
+
+        public String getName() { return name; }
+        public Gender getGender() { return gender; }
+        public double getHeight() { return heightMeters; }
+        public double getWeight() { return weightKg; }
+
+        public double bmi() {
+            return weightKg / (heightMeters * heightMeters);
+        }
+
+        public double ibw() {
+            double cm = heightMeters * 100;
+            double base = 50.0 + 2.3 * ((cm - 152.4) / 2.54);
+            if (gender == Gender.FEMALE) base -= 2.3;
+            return Math.round(base * 100.0) / 100.0;
+        }
+    }
+
+    static final DecimalFormat DF = new DecimalFormat("0.00");
+
+    // ----------------- Mood & Activity scoring -----------------
+    static int moodToScore(String mood) {
+        if (mood == null) return 3;
+        String m = mood.trim().toLowerCase();
+        switch (m) {
+            case "very happy": case "excellent": case "5": return 5;
+            case "happy": case "4": return 4;
+            case "neutral": case "ok": case "3": return 3;
+            case "sad": case "2": return 2;
+            case "very sad": case "depressed": case "1": return 1;
+            default:
+                try { int v = Integer.parseInt(m); if (v >= 1 && v <= 5) return v; } catch (Exception e) {}
+                return 3;
+        }
+    }
+
+    static int activityToScore(String activity) {
+        if (activity == null) return 2;
+        String a = activity.trim().toLowerCase();
+        if (a.contains("sedent")) return 1;
+        if (a.contains("light")) return 2;
+        if (a.contains("moderate")) return 3;
+        if (a.contains("active") || a.contains("regular")) return 4;
+        if (a.contains("very") || a.contains("athlete")) return 5;
+        try { int v = Integer.parseInt(a.trim()); if (v >= 1 && v <= 5) return v; } catch (Exception e) {}
+        return 2;
+    }
+
+    // ----------------- Body Harmony Score -----------------
+    // Weighted: 50% BMI-distance, 30% mood, 20% activity -> scaled 0..100
+    static int computeBodyHarmonyScore(double currentWeight, double ibw, int moodScore, int activityScore) {
+        double diffKg = Math.abs(currentWeight - ibw);
+        double norm = Math.min(diffKg / Math.max(ibw, 1.0), 0.5); // 0..0.5
+        double bmiComponent = (1.0 - (norm / 0.5)); // 1 when perfect, 0 at cap
+        double moodC = (moodScore - 1) / 4.0;
+        double actC = (activityScore - 1) / 4.0;
+        double score = 100.0 * (0.5 * bmiComponent + 0.3 * moodC + 0.2 * actC);
+        return (int) Math.round(Math.max(0, Math.min(100, score)));
+    }
+
+    // ----------------- Nutrition suggestions -----------------
+    static void printNutritionAdvice(Person p) {
+        double bmi = p.bmi();
+        System.out.println("\n--- Nutrition Suggestions ---");
+        if (bmi < 18.5) {
+            System.out.println("Underweight: increase calorie intake and focus on nutrient-dense foods:");
+            System.out.println(" • Nuts, nut butter, full-fat dairy, protein smoothies");
+            System.out.println(" • Whole grains, avocado, lean red meat, eggs");
+            System.out.println("Aim for a moderate calorie surplus (~+300–500 kcal/day) and add resistance training.");
+        } else if (bmi < 25) {
+            System.out.println("Normal: maintain balanced diet:");
+            System.out.println(" • Lean proteins, whole grains, vegetables, fruits, healthy fats");
+            System.out.println("Keep monitoring and stay active.");
+        } else if (bmi < 30) {
+            System.out.println("Overweight: reduce refined carbs and sugar, increase protein and fiber:");
+            System.out.println(" • Vegetables, legumes, lean fish/chicken, whole grains");
+            System.out.println("Aim for a safe calorie deficit (~-500 kcal/day) with exercise.");
+        } else {
+            System.out.println("Obese: prioritize low-energy-density foods and consult professional help if needed:");
+            System.out.println(" • High-fiber vegetables, legumes, lean proteins, whole grains");
+            System.out.println("Safe weight loss typically aims for ~0.5 kg/week (-500 kcal/day); consult a nutritionist.");
+        }
+        System.out.println("------------------------------");
+    }
+
+    // ----------------- Daily goals -----------------
+    static void printDailyGoals(Person p, String activityLevel) {
+        int act = activityToScore(activityLevel);
+        double bmi = p.bmi();
+
+        int steps = 6000, exercise = 20, sleep = 7;
+        double water = 2.0;
+
+        if (bmi < 18.5) { steps = 5000; exercise = 30; sleep = 8; }
+        else if (bmi < 25) { steps = 7000; exercise = 30; }
+        else if (bmi < 30) { steps = 8000; exercise = 40; }
+        else { steps = 6000; exercise = 30; }
+
+        if (act >= 4) { steps += 2000; exercise += 15; }
+
+        System.out.println("\n--- Daily Goals ---");
+        System.out.println(" • Steps/day: " + steps);
+        System.out.println(" • Exercise: " + exercise + " minutes/day of moderate activity");
+        System.out.println(" • Water: " + water + " L/day");
+        System.out.println(" • Sleep: " + sleep + " hours/night");
+        System.out.println(" • Tip: Include 2 strength training sessions weekly and 10 min mobility daily.");
+        System.out.println("--------------------");
+    }
+
+    // ----------------- Interactive result menu (Step 7) -----------------
+    static boolean askYesNo(Scanner sc, String question) {
+        while (true) {
+            System.out.print(question);
+            String ans = sc.nextLine().trim().toLowerCase();
+            if (ans.startsWith("y")) return true;
+            if (ans.startsWith("n")) return false;
+            System.out.println("Please answer yes or no.");
+        }
+    }
+
+    static void interactiveResults(Person user, int moodScore, int activityScore, Scanner sc) {
+        double bmi = user.bmi();
+        double ibw = user.ibw();
+        int harmony = computeBodyHarmonyScore(user.getWeight(), ibw, moodScore, activityScore);
+
+        System.out.println("\n=== Health Insights Menu ===");
+
+        if (askYesNo(sc, "Do you want to know your BMI? (yes/no): ")) {
+            System.out.println("Your BMI: " + DF.format(bmi));
+            System.out.println();
+        }
+
+        if (askYesNo(sc, "Do you want to know your BMI Category? (yes/no): ")) {
+            System.out.println("BMI Category: " + bmiCategory(bmi));
+            System.out.println();
+        }
+
+        if (askYesNo(sc, "Do you want to know your Ideal Body Weight (IBW)? (yes/no): ")) {
+            System.out.println("Ideal Body Weight (IBW): " + DF.format(ibw) + " kg");
+            System.out.println();
+        }
+
+        if (askYesNo(sc, "Do you want to know your Body Harmony Score? (yes/no): ")) {
+            System.out.println("Body Harmony Score: " + harmony + "/100");
+            System.out.println();
+        }
+
+        if (askYesNo(sc, "Do you want personalized Nutrition Suggestions? (yes/no): ")) {
+            printNutritionAdvice(user);
+        }
+
+        if (askYesNo(sc, "Do you want your Daily Health Goals? (yes/no): ")) {
+            System.out.print("Confirm your activity level (sedentary/light/moderate/active/very active): ");
+            String activity = sc.nextLine();
+            printDailyGoals(user, activity);
+        }
+
+        System.out.println("\nEnd of Health Insights.");
+    }
+
+    static String bmiCategory(double bmi) {
+        if (bmi < 18.5) return "Underweight";
+        if (bmi < 25) return "Normal";
+        if (bmi < 30) return "Overweight";
+        return "Obese";
+    }
+
+    // ----------------- Simple CSV save -----------------
+    static void saveProfileCSV(Person p, Path out) throws IOException {
+        try (BufferedWriter bw = Files.newBufferedWriter(out)) {
+            bw.write("name,gender,height_m,weight_kg");
+            bw.newLine();
+            bw.write(String.join(",", p.getName(), p.getGender().name(), DF.format(p.getHeight()), DF.format(p.getWeight())));
+            bw.newLine();
+        }
+    }
+
+    // ----------------- Main interactive flow -----------------
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+        try {
+            System.out.println("Welcome to the Step-by-Step BMI & Health Assistant\n");
+
+            // 1) Name
+            System.out.print("1) What's your name? ");
+            String name = sc.nextLine().trim();
+            if (name.isEmpty()) name = "User";
+            System.out.println("Hello, " + name + "!");
+
+            // 2) Gender
+            Gender gender = null;
+            while (gender == null) {
+                System.out.print("2) Enter your gender (male/female/other): ");
+                String g = sc.nextLine().trim().toLowerCase();
+                if (g.startsWith("m")) gender = Gender.MALE;
+                else if (g.startsWith("f")) gender = Gender.FEMALE;
+                else if (g.startsWith("o")) gender = Gender.OTHER;
+                else System.out.println("Please enter male, female, or other.");
+            }
+            System.out.println("Gender recorded.\n");
+
+            // 3) Height in cm
+            double heightCm = 0;
+            while (true) {
+                System.out.print("3) Enter your height in centimeters (e.g., 170): ");
+                String line = sc.nextLine().trim();
+                try {
+                    heightCm = Double.parseDouble(line);
+                    if (heightCm < 50 || heightCm > 250) {
+                        System.out.println("Please enter a realistic height between 50 and 250 cm.");
+                        continue;
+                    }
+                    break;
+                } catch (NumberFormatException e) {
+                    System.out.println("Invalid number. Try again.");
+                }
+            }
+            System.out.println("Height saved: " + DF.format(heightCm) + " cm.\n");
+
+            // 4) Weight in kg
+            double weightKg = 0;
+            while (true) {
+                System.out.print("4) Enter your weight in kilograms (e.g., 65): ");
+                String line = sc.nextLine().trim();
+                try {
+                    weightKg = Double.parseDouble(line);
+                    if (weightKg < 10 || weightKg > 700) {
+                        System.out.println("Please enter a realistic weight between 10 and 700 kg.");
+                        continue;
+                    }
+                    break;
+                } catch (NumberFormatException e) {
+                    System.out.println("Invalid number. Try again.");
+                }
+            }
+            System.out.println("Weight saved: " + DF.format(weightKg) + " kg.\n");
+
+            // Build Person object (height convert to meters)
+            double heightMeters = heightCm / 100.0;
+            Person user = new Person(name, gender, heightMeters, weightKg);
+
+            // 5) Mood - immediate feedback
+            System.out.print("5) How are you feeling today? (very happy/happy/neutral/sad/very sad or 1-5): ");
+            String mood = sc.nextLine().trim();
+            int moodScore = moodToScore(mood);
+            System.out.println("Mood score interpreted as: " + moodScore + "/5\n");
+
+            // 6) Activity - immediate feedback
+            System.out.print("6) Describe your typical activity level (sedentary/light/moderate/active/very active): ");
+            String activity = sc.nextLine().trim();
+            int activityScore = activityToScore(activity);
+            System.out.println("Activity score interpreted as: " + activityScore + "/5\n");
+
+            // 7) Interactive results menu (asks one by one)
+            interactiveResults(user, moodScore, activityScore, sc);
+
+            // Option to save profile
+            if (askYesNo(sc, "\nDo you want to save your profile to user_profile.csv? (yes/no): ")) {
+                Path out = Paths.get("user_profile.csv");
+                try {
+                    saveProfileCSV(user, out);
+                    System.out.println("Profile saved to " + out.toAbsolutePath());
+                } catch (IOException ioe) {
+                    System.err.println("Failed to save profile: " + ioe.getMessage());
+                }
+            }
+
+            // Offer printable daily action plan
+            if (askYesNo(sc, "Would you like a printable daily action plan? (yes/no): ")) {
+                System.out.print("Confirm your activity level (sedentary/light/moderate/active/very active): ");
+                String actConfirm = sc.nextLine().trim();
+                printDailyGoals(user, actConfirm);
+            }
+
+            System.out.println("\nThank you! Stay healthy.");
+        } finally {
+            sc.close();
+        }
+    } 
+}
